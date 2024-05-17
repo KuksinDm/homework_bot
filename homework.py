@@ -3,6 +3,7 @@ import sys
 import time
 import logging
 import requests
+from urllib.parse import unquote
 
 from dotenv import load_dotenv
 from telebot import TeleBot
@@ -58,7 +59,7 @@ def send_message(bot: TeleBot, message: str) -> None:
     """Отправка сообщений ботом."""
     try:
         bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-        logger.debug('Сообщение успешно отправлено')
+        logger.debug(f'Сообщение успешно отправлено: {unquote(message)}')
     except Exception as error:
         logger.error(f'Ошибка при отправке сообщения: {error}')
 
