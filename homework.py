@@ -145,12 +145,14 @@ def main() -> None:
             api_response = get_api_answer(timestamp)
             check_response(api_response)
             homeworks = api_response.get('homeworks', [])
-            if not homeworks:
+
+            if homeworks:
+                status_message = parse_status(homeworks[0])
+                send_message(bot, status_message)
+                timestamp = api_response.get('current_date', timestamp)
+            else:
                 logger.debug("Новых проверок домашних работ - нет.")
                 timestamp = api_response.get('current_date', timestamp)
-            status_message = parse_status(homeworks[0])
-            send_message(bot, status_message)
-            timestamp = api_response.get('current_date', timestamp)
 
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
