@@ -157,7 +157,7 @@ class ErrorHandler:
         if self.last_error_message != error_message:
             send_message(self.bot, error_message)
             self.last_error_message = error_message
-    
+
     def reset_last_error(self):
         """Сброс последней ошибки."""
         self.last_error_message = None
