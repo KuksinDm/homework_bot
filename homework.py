@@ -148,7 +148,7 @@ class ErrorHandler:
     """Класс для отслеживания последней ошибки."""
 
     def __init__(self, bot):
-        """Определяем."""
+        """Конструктор класса."""
         self.last_error_message = None
         self.bot = bot
 
@@ -157,6 +157,10 @@ class ErrorHandler:
         if self.last_error_message != error_message:
             send_message(self.bot, error_message)
             self.last_error_message = error_message
+    
+    def reset_last_error(self):
+        """Сброс последней ошибки."""
+        self.last_error_message = None
 
 
 def main() -> None:
@@ -176,6 +180,7 @@ def main() -> None:
             if homeworks:
                 status_message = parse_status(homeworks[0])
                 send_message(bot, status_message)
+                error_handler.reset_last_error()
                 timestamp = api_response.get('current_date', timestamp)
             else:
                 logger.debug("Новых проверок домашних работ - нет.")
