@@ -3,10 +3,15 @@ import sys
 import time
 import logging
 import requests
+from http import HTTPStatus
 from urllib.parse import unquote
+from json.decoder import JSONDecodeError
 
+from requests import RequestException
 from dotenv import load_dotenv
 from telebot import TeleBot
+
+from exceptions import ResponseStatusError
 
 
 load_dotenv()
@@ -16,6 +21,7 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 RETRY_PERIOD = 600
+START_OFFSET = 300
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
@@ -25,7 +31,7 @@ HOMEWORK_VERDICTS = {
     'reviewing': 'Работа взята на проверку ревьюером.',
     'rejected': 'Работа проверена: у ревьюера есть замечания.'
 }
-
+# хотел вынести в отдельный фаил, но тесты не дали
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s, %(levelname)s, %(message)s',
@@ -73,63 +79,84 @@ def get_api_answer(timestamp: int) -> dict[str, any]:
             headers=HEADERS,
             params=payload
         )
-        if response.status_code != 200:
-            error_message = (
-                'Получен неправильный код состояния'
-                f' от API: {response.status_code}'
-            )
-            logger.error(error_message)
-            raise Exception(error_message)
+        response.raise_for_status()
 
-        return response.json()
-    except requests.RequestException as error:
+    except RequestException as error:
         error_message = (
             'Произошла ошибка при обращении'
             f' к API: {response.status_code} {error}'
         )
-        logger.error(error_message)
-        raise Exception(error_message)
+        raise RequestException(error_message)
+
+    if response.status_code != HTTPStatus.OK:
+        error_message = (
+            'Получен неправильный код состояния'
+            f' от API: {response.status_code}'
+        )
+        # сделал кастомный класс исключения, не знаю когда лучше использовать
+        # кастомные, а когда базовые
+        raise ResponseStatusError(error_message)
+
+    try:
+        return response.json()
+    except JSONDecodeError as json_error:
+        error_message = (
+            'Ошибка декодирования JSON ответа от API:'
+            f' {json_error}'
+        )
+        raise JSONDecodeError(error_message)
 
 
 def check_response(response: dict[str, any]) -> bool:
     """Проверяет ответ API на соответствие документации."""
     if not isinstance(response, dict):
         error_message = ('Ответ должен быть словарем')
-        logger.error(error_message)
         raise TypeError(error_message)
 
     if 'homeworks' not in response:
         error_message = ('Ответ API не содержит поле "homeworks"')
-        logger.error(error_message)
         raise ValueError(error_message)
 
     if not isinstance(response['homeworks'], list):
         error_message = ('Поле "homeworks" должно быть списком')
-        logger.error(error_message)
         raise TypeError(error_message)
 
-    return True
+    return response['homeworks']
 
 
 def parse_status(homework: dict[str, any]) -> str:
     """Извлекает статус работы и возвращает соответствующий вердикт."""
-    try:
-        status = homework['status']
-        homework_name = homework['homework_name']
-    except KeyError as error:
+    status = homework.get('status')
+    homework_name = homework.get('homework_name')
+
+    if status is None or homework_name is None:
         error_message = (
-            f'Недостаточно информации для определения статуса работы {error}'
+            "Недостаточно информации для определения статуса работы"
         )
-        logger.error(error_message)
         raise ValueError(error_message)
 
     if status not in HOMEWORK_VERDICTS:
         error_message = ('Недокументированный статус работы')
-        logger.error(error_message)
         raise ValueError(error_message)
 
-    verdict = HOMEWORK_VERDICTS[status]
-    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
+    return (
+        f'Изменился статус проверки работы "{homework_name}"'
+        f'. {HOMEWORK_VERDICTS[status]}')
+
+
+class ErrorHandler:
+    """Класс для отслеживания последней ошибки."""
+
+    def __init__(self, bot):
+        """Определяем."""
+        self.last_error_message = None
+        self.bot = bot
+
+    def handle_error(self, error_message):
+        """Обработка ошибки."""
+        if self.last_error_message != error_message:
+            send_message(self.bot, error_message)
+            self.last_error_message = error_message
 
 
 def main() -> None:
@@ -138,13 +165,13 @@ def main() -> None:
 
     # Создаем объект класса бота
     bot = TeleBot(token=TELEGRAM_TOKEN)
-    timestamp = int(time.time())
+    error_handler = ErrorHandler(bot)
+    timestamp = int(time.time()) - START_OFFSET
 
     while True:
         try:
             api_response = get_api_answer(timestamp)
-            check_response(api_response)
-            homeworks = api_response.get('homeworks', [])
+            homeworks = check_response(api_response)
 
             if homeworks:
                 status_message = parse_status(homeworks[0])
@@ -152,12 +179,11 @@ def main() -> None:
                 timestamp = api_response.get('current_date', timestamp)
             else:
                 logger.debug("Новых проверок домашних работ - нет.")
-                timestamp = api_response.get('current_date', timestamp)
 
         except Exception as error:
-            message = f'Сбой в работе программы: {error}'
-            send_message(bot, message)
-            logger.error(message)
+            error_message = f'Сбой в работе программы: {error}'
+            logger.error(error_message)
+            error_handler.handle_error(error_message)
 
         time.sleep(RETRY_PERIOD)
 
